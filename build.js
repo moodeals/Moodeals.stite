@@ -8,6 +8,8 @@ const deals = JSON.parse(fs.readFileSync("deals.json", "utf8"));
 
 const esc = (s) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+const NOTICE = "Deals and coupons can end at any time, may have limits, and can sell out. Check Amazon for the current offer.";
+
 const DISCLOSURES = `<p class="disc"><strong>#ad</strong> As an Amazon Associate, I earn from qualifying purchases. Prices and availability are subject to change.</p>`;
 
 const CSS = `
@@ -35,11 +37,16 @@ h2{font:900 1.5rem/1.15 "Arial Black","Helvetica Neue",Arial,sans-serif;margin:4
 .info small{color:var(--muted)}
 .get{margin-top:auto;display:block;text-align:center;background:var(--yellow);color:var(--navy);font:800 .95rem system-ui,sans-serif;padding:10px;border-radius:8px}
 .big .pic{border-radius:12px;max-width:420px}
+.notice{background:#fff3c4;border-left:5px solid var(--yellow);padding:10px 12px;border-radius:6px;font-size:.92rem;margin:14px 0}
 .price{font:900 1.6rem "Arial Black",Arial,sans-serif;margin:10px 0 0}
 .btn{display:block;text-align:center;margin:18px 0 8px;padding:16px 22px;background:var(--yellow);color:var(--navy);border-radius:10px;text-decoration:none;font:900 1.1rem system-ui,sans-serif;box-shadow:0 3px 0 #c9a200}
 .back{color:var(--blue);font-weight:700}
 .disc{margin-top:22px;font-size:.82rem;color:var(--muted)}
 footer{max-width:760px;margin:0 auto;padding:0 16px 40px}
+footer a{color:var(--blue);font-weight:700}
+.nav{float:right;margin-top:6px;font-size:.9rem;color:#c9d3ff!important;text-decoration:underline!important}
+.doc h3{font:900 1.05rem "Arial Black",Arial,sans-serif;margin:22px 0 6px}
+.doc p{margin:0 0 10px}
 `;
 
 const page = (title, body) => `<!doctype html>
@@ -47,9 +54,9 @@ const page = (title, body) => `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
 <style>${CSS}</style></head><body>
-<header><div class="in"><a href="/"><h1>Moo<span>Deals</span></h1></a><p class="tag">${TAGLINE}</p></div></header>
+<header><div class="in"><a class="nav" href="/disclosure">Disclosure</a><a href="/"><h1>Moo<span>Deals</span></h1></a><p class="tag">${TAGLINE}</p></div></header>
 ${body}
-<footer>${DISCLOSURES}</footer></body></html>`;
+<footer>${DISCLOSURES}<p><a href="/disclosure">Affiliate disclosure</a></p></footer></body></html>`;
 
 const pic = (d) => `<div class="pic">${d.image ? `<img src="${esc(d.image)}" alt="${esc(d.title)}" loading="lazy" referrerpolicy="no-referrer">` : `<span class="ph">MooDeals</span>`}${d.badge ? `<span class="badge">${esc(d.badge)}</span>` : ""}</div>`;
 
@@ -59,7 +66,7 @@ fs.mkdirSync(out, { recursive: true });
 
 // Home page
 const cards = deals.map((d) => `<a class="card" href="/${esc(d.code)}">${pic(d)}<div class="info"><b>${esc(d.title)}</b>${d.note ? `<small>${esc(d.note)}</small>` : ""}<span class="get">Get deal</span></div></a>`).join("");
-fs.writeFileSync(path.join(out, "index.html"), page(`${SITE} – Today’s deals`, `<div class="wrap"><h2>Today’s deals</h2><div class="grid">${cards}</div></div>`));
+fs.writeFileSync(path.join(out, "index.html"), page(`${SITE} – Today’s deals`, `<div class="wrap"><h2>Today’s deals</h2><p class="notice">${NOTICE}</p><div class="grid">${cards}</div></div>`));
 
 // Deal pages + redirects
 let redirects = "";
@@ -70,12 +77,30 @@ for (const d of deals) {
 ${pic(d)}
 ${d.price ? `<p class="price">${esc(d.price)}</p>` : ""}
 ${d.note ? `<p>${esc(d.note)}</p>` : ""}
+<p class="notice">${NOTICE}</p>
 <a class="btn" href="${esc(d.url)}" rel="nofollow sponsored noopener">Get this deal on Amazon</a>
 <p><a class="back" href="/">See all deals</a></p></div>`;
   fs.writeFileSync(path.join(dir, "index.html"), page(`${d.title} – ${SITE}`, body));
   redirects += `/go/${d.code} ${d.url} 302\n`;
 }
 fs.writeFileSync(path.join(out, "_redirects"), redirects);
+
+// Disclosure page at /disclosure
+const disclosure = `<div class="wrap doc"><h2>Affiliate disclosure</h2>
+<p><strong>#ad</strong> MooDeals is a participant in the Amazon Services LLC Associates Program, an affiliate advertising program designed to provide a way for sites to earn advertising fees by advertising and linking to Amazon.com. As an Amazon Associate, I earn from qualifying purchases.</p>
+<h3>How the links work</h3>
+<p>When you click a deal link on this site or in my posts and buy something on Amazon, I may earn a small commission. It comes from Amazon and costs you nothing extra. It doesn’t change the price you pay.</p>
+<h3>My promise to you</h3>
+<p>I only share deals I think are worth a look. Links that earn me a commission are marked #ad, and this notice appears on every page.</p>
+<h3>Prices and availability</h3>
+<p>Prices and availability are subject to change without notice. Always check the current price and details on Amazon before you buy.</p>
+<h3>FTC notice</h3>
+<p>In line with Federal Trade Commission guidelines, I disclose that I have a financial relationship with Amazon through its affiliate program, and I may be compensated when you buy through my links.</p>
+<h3>Trademarks</h3>
+<p>Amazon and the Amazon logo are trademarks of Amazon.com, Inc. or its affiliates. MooDeals is not owned by or affiliated with Amazon.</p>
+<p><a class="back" href="/">Back to deals</a></p></div>`;
+fs.mkdirSync(path.join(out, "disclosure"), { recursive: true });
+fs.writeFileSync(path.join(out, "disclosure", "index.html"), page(`Affiliate disclosure – ${SITE}`, disclosure));
 
 // Private add-deal page at /admin
 if (fs.existsSync("admin.html")) {
