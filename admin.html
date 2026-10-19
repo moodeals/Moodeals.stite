@@ -11,6 +11,7 @@ header{background:var(--navy);color:#fff;padding:16px;border-bottom:5px solid va
 main{max-width:560px;margin:0 auto;padding:16px}
 label{display:block;font-weight:700;margin:12px 0 4px}
 input{width:100%;padding:13px;border:2px solid #cfd6ee;border-radius:10px;font-size:16px;background:#fff;color:var(--navy)}
+input[readonly]{background:#eef0f8}
 button{font:800 1rem system-ui,sans-serif;padding:14px 18px;border:0;border-radius:10px;cursor:pointer}
 .go{width:100%;margin-top:16px;background:var(--yellow);color:var(--navy);box-shadow:0 3px 0 #c9a200}
 .alt{background:#e3e8fa;color:var(--navy);padding:10px 14px}
@@ -21,11 +22,13 @@ button{font:800 1rem system-ui,sans-serif;padding:14px 18px;border:0;border-radi
 .err{color:#c0102f}
 details{margin-top:20px}
 summary{font-weight:800;cursor:pointer}
-.d{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #d9dff2}
-.d span{flex:1;font-size:.92rem}
+.d{padding:10px 0;border-bottom:1px solid #d9dff2}
+.d span{display:block;font-size:.95rem}
+.d a{color:var(--blue);font-weight:700;font-size:.9rem}
+#prev{max-width:140px;max-height:140px;border-radius:8px;margin-top:8px;display:none}
 small{color:var(--muted)}
 </style></head><body>
-<header>Add a deal</header>
+<header id="head">Add a deal</header>
 <main>
 <div id="setup" style="display:none">
 <p><b>One-time setup.</b> Paste your GitHub token once. It stays on this device only.</p>
@@ -36,21 +39,24 @@ small{color:var(--muted)}
 </div>
 
 <div id="app" style="display:none">
-<label for="url">Amazon link</label><input id="url" inputmode="url" placeholder="https://amzn.to/...">
+<label for="url">Deal link <small>(Amazon, Mavely, or any affiliate link)</small></label><input id="url" inputmode="url" placeholder="https://...">
 <label for="title">Deal title</label><input id="title" placeholder="Nivea Body Wash 3-Pack">
 <label for="note">Short note (optional)</label><input id="note" placeholder="Clip the coupon on the page">
-<label for="badge">Badge (optional)</label><input id="badge" placeholder="$10 OFF">
-<label for="image">Image link (optional)</label><input id="image" inputmode="url">
-<label for="code">Link code <small>(made for you, change if you like)</small></label><input id="code" autocapitalize="off">
+<label for="badge">Badge (optional)</label><input id="badge" placeholder="COUPON">
+<label for="file">Photo from your phone (optional)</label><input id="file" type="file" accept="image/*">
+<label for="image">Or paste an image link (optional)</label><input id="image" inputmode="url">
+<img id="prev" alt="Preview">
+<label for="code">Link code <small>(made for you)</small></label><input id="code" autocapitalize="off">
 <button class="go" id="add">Add deal</button>
+<p><button class="alt" id="cancel" style="display:none">Cancel editing</button></p>
 <div class="msg" id="msg"></div>
 <div class="res" id="res">
 <p><b>Post this on HC / Twitter:</b></p><p id="goLink"></p>
 <div class="row"><button class="alt" id="cpGo">Copy link</button><button class="alt" id="cpPost">Copy title + link</button></div>
 <p><small>Deal page: <span id="pageLink"></span></small></p>
-<p><small>Live in about a minute. Open the link once to check it lands on Amazon.</small></p>
+<p><small>Live in about a minute. Open the link once to check it works.</small></p>
 </div>
-<details><summary>Current deals</summary><div id="list"></div></details>
+<details open><summary>Current deals</summary><div id="list"></div></details>
 <p><button class="alt" id="reset">Change token or settings</button></p>
 </div>
 </main>
@@ -59,22 +65,56 @@ const $ = (id) => document.getElementById(id);
 const get = (k) => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } };
 const put = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 let cfg = { tok: get("md_tok"), repo: get("md_repo") || "moodeals/Moodeals.stite", site: get("md_site") || "https://moodeals.store" };
+let current = [], editing = null, photo = null;
 
+const esc = (s) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const b64d = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, "")), (c) => c.charCodeAt(0)));
 const b64e = (s) => { const b = new TextEncoder().encode(s); let t = ""; b.forEach((x) => (t += String.fromCharCode(x))); return btoa(t); };
-const api = (m, body) => fetch(`https://api.github.com/repos/${cfg.repo}/contents/deals.json`, {
+const api = (p, m, body) => fetch(`https://api.github.com/repos/${cfg.repo}/contents/${p}`, {
   method: m || "GET",
   headers: { Authorization: "Bearer " + cfg.tok, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
   body: body ? JSON.stringify(body) : undefined
 });
+const fail = (r) => r.status === 401 || r.status === 403 ? "GitHub rejected the token. Check it has Contents: Read and write for this repo." : r.status === 404 ? "Repository or file not found. Check the repository name." : "GitHub error " + r.status;
 async function load() {
-  const r = await api();
-  if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "GitHub rejected the token. Check it has Contents: Read and write for this repo." : r.status === 404 ? "Repository or deals.json not found. Check the repository name." : "GitHub error " + r.status);
+  const r = await api("deals.json");
+  if (!r.ok) throw new Error(fail(r));
   const j = await r.json();
   return { sha: j.sha, deals: JSON.parse(b64d(j.content)) };
 }
+async function save(deals, sha, msg) {
+  const r = await api("deals.json", "PUT", { message: msg, content: b64e(JSON.stringify(deals, null, 2) + "\n"), sha });
+  if (!r.ok) throw new Error(r.status === 409 ? "Something changed at the same time. Tap the button again." : "Could not save (error " + r.status + ").");
+}
 const slug = (t) => (t.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "deal") + Math.random().toString(36).slice(2, 5);
 const say = (t, bad) => { $("msg").textContent = t; $("msg").className = "msg" + (bad ? " err" : ""); };
+
+function resize(file) {
+  return new Promise((ok, no) => {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, 900 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(u); ok(c.toDataURL("image/jpeg", 0.85).split(",")[1]);
+    };
+    img.onerror = () => no(new Error("Could not read that photo."));
+    img.src = u;
+  });
+}
+$("file").onchange = async () => {
+  const f = $("file").files[0]; photo = null;
+  if (!f) { $("prev").style.display = "none"; return; }
+  try { photo = await resize(f); $("prev").src = "data:image/jpeg;base64," + photo; $("prev").style.display = "block"; }
+  catch (e) { say(e.message, true); }
+};
+async function uploadPhoto(code) {
+  const name = `images/${code}-${Math.random().toString(36).slice(2, 6)}.jpg`;
+  const r = await api(name, "PUT", { message: "Add image " + name, content: photo });
+  if (!r.ok) throw new Error("Photo upload failed (error " + r.status + ").");
+  return "/" + name;
+}
 
 function show() {
   const ok = !!cfg.tok;
@@ -84,49 +124,71 @@ function show() {
 }
 async function refresh() {
   try {
-    const { deals } = await load();
-    $("list").innerHTML = deals.map((d) => `<div class="d"><span>${d.title.replace(/</g, "&lt;")}<br><small>/go/${d.code}</small></span><button class="alt" data-c="${d.code}">Remove</button></div>`).join("") || "<small>No deals yet.</small>";
+    const { deals } = await load(); current = deals;
+    $("list").innerHTML = deals.map((d) => `<div class="d"><span><b>${esc(d.title)}</b><br><small>/go/${esc(d.code)}</small></span><div class="row"><button class="alt" data-e="${esc(d.code)}">Edit</button><button class="alt" data-c="${esc(d.code)}">Remove</button><a href="${esc(cfg.site)}/go/${esc(d.code)}" target="_blank" rel="noopener" style="padding:10px 4px">Test link</a></div></div>`).join("") || "<small>No deals yet.</small>";
   } catch (e) { say(e.message, true); }
+}
+function clearForm() {
+  ["url", "title", "note", "badge", "image", "code", "file"].forEach((i) => { $(i).value = ""; delete $(i).dataset.edited; });
+  photo = null; editing = null; $("prev").style.display = "none"; $("code").readOnly = false;
+  $("add").textContent = "Add deal"; $("cancel").style.display = "none"; $("head").textContent = "Add a deal";
 }
 $("save").onclick = () => {
   cfg = { tok: $("tok").value.trim(), repo: $("repo").value.trim(), site: $("site").value.trim().replace(/\/$/, "") };
   put("md_tok", cfg.tok); put("md_repo", cfg.repo); put("md_site", cfg.site); show();
 };
 $("reset").onclick = () => { put("md_tok", ""); cfg.tok = ""; show(); };
-$("title").oninput = () => { if (!$("code").dataset.edited) $("code").value = $("title").value ? slug($("title").value) : ""; };
+$("cancel").onclick = () => { clearForm(); say(""); };
+$("title").oninput = () => { if (!editing && !$("code").dataset.edited) $("code").value = $("title").value ? slug($("title").value) : ""; };
 $("code").oninput = () => { $("code").dataset.edited = "1"; };
 
 $("add").onclick = async () => {
   const url = $("url").value.trim(), title = $("title").value.trim();
   let code = $("code").value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!/^https?:\/\//.test(url)) return say("Paste the Amazon link first.", true);
+  if (!/^https?:\/\//.test(url)) return say("Paste the deal link first.", true);
   if (!title) return say("Add a title.", true);
   if (!code) code = slug(title);
-  $("add").disabled = true; say("Adding…");
+  $("add").disabled = true; say(photo ? "Uploading photo…" : "Saving…");
   try {
+    let image = $("image").value.trim();
+    if (photo) image = await uploadPhoto(code);
     const { sha, deals } = await load();
-    if (deals.some((d) => d.code === code)) code += Math.random().toString(36).slice(2, 4);
-    deals.unshift({ code, title, price: "", note: $("note").value.trim(), badge: $("badge").value.trim(), image: $("image").value.trim(), url });
-    const r = await api("PUT", { message: "Add deal " + code, content: b64e(JSON.stringify(deals, null, 2) + "\n"), sha });
-    if (!r.ok) throw new Error(r.status === 409 ? "Something changed at the same time. Tap Add deal again." : "Could not save (error " + r.status + ").");
+    const fields = { title, note: $("note").value.trim(), badge: $("badge").value.trim(), image, url };
+    if (editing) {
+      const i = deals.findIndex((d) => d.code === editing);
+      if (i < 0) throw new Error("That deal no longer exists.");
+      deals[i] = Object.assign({}, deals[i], fields);
+      code = editing;
+    } else {
+      if (deals.some((d) => d.code === code)) code += Math.random().toString(36).slice(2, 4);
+      deals.unshift(Object.assign({ code, added: new Date().toISOString().slice(0, 10), price: "" }, fields));
+    }
+    await save(deals, sha, (editing ? "Update deal " : "Add deal ") + code);
     const go = `${cfg.site}/go/${code}`;
     $("goLink").textContent = go; $("pageLink").textContent = `${cfg.site}/${code}`;
-    $("res").style.display = "block"; say("Added. Live in about a minute.");
+    $("res").style.display = "block"; say(editing ? "Saved. Updates in about a minute." : "Added. Live in about a minute.");
     $("cpGo").onclick = () => navigator.clipboard.writeText(go);
-    $("cpPost").onclick = () => navigator.clipboard.writeText(title + "\n" + go);
-    ["url", "title", "note", "badge", "image", "code"].forEach((i) => { $(i).value = ""; delete $(i).dataset.edited; });
-    refresh();
+    $("cpPost").onclick = () => navigator.clipboard.writeText(title + "\nCan end anytime, limited.\n" + go);
+    clearForm(); refresh();
   } catch (e) { say(e.message, true); }
   $("add").disabled = false;
 };
 $("list").onclick = async (e) => {
-  const c = e.target.dataset && e.target.dataset.c;
+  const ed = e.target.dataset && e.target.dataset.e, c = e.target.dataset && e.target.dataset.c;
+  if (ed) {
+    const d = current.find((x) => x.code === ed); if (!d) return;
+    clearForm(); editing = ed;
+    $("url").value = d.url || ""; $("title").value = d.title || ""; $("note").value = d.note || ""; $("badge").value = d.badge || "";
+    $("image").value = d.image || ""; $("code").value = d.code; $("code").readOnly = true;
+    if (d.image) { $("prev").src = d.image.startsWith("/") ? cfg.site + d.image : d.image; $("prev").style.display = "block"; }
+    $("add").textContent = "Save changes"; $("cancel").style.display = "inline-block"; $("head").textContent = "Edit deal";
+    say("Change what you need, then tap Save changes."); window.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
   if (!c || !confirm("Remove this deal? Its links will stop working.")) return;
   try {
     const { sha, deals } = await load();
-    const next = deals.filter((d) => d.code !== c);
-    const r = await api("PUT", { message: "Remove deal " + c, content: b64e(JSON.stringify(next, null, 2) + "\n"), sha });
-    if (!r.ok) throw new Error("Could not remove (error " + r.status + ").");
+    await save(deals.filter((d) => d.code !== c), sha, "Remove deal " + c);
     say("Removed. Updates in about a minute."); refresh();
   } catch (er) { say(er.message, true); }
 };
